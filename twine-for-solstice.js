@@ -1,109 +1,244 @@
-// Story Format: Twee to JSON integration
+window.storyFormat({
+    "name": "Harlowe 3 to JSON",
+    "version": "0.0.6",
+    "author": "Jonathan Schoonhoven",
+    "description": "Convert Harlowe 3-formatted Twine story to JSON",
+    "proofing": false,
+    "source": `
+<html>
+    <head>
+        <meta http-equiv='Content-Type' content='text/html; charset=UTF-8' />
+        <title>Harlowe To JSON</title>
+        <script type='text/javascript'>
+            /**
+            * Twine To JSON
+            *
+            * Copyright (c) 2020 Jonathan Schoonhoven
+            *
+            * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
+            * associated documentation files (the 'Software'), to deal in the Software without restriction,
+            * including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense,
+            * and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so,
+            * subject to the following conditions:
+            *
+            * The above copyright notice and this permission notice shall be included in all copies or substantial
+            * portions of the Software.
+            *
+            * THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT
+            * LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+            * IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+            * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+            * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+            */
 
-(function() {
-    "use strict";
+            const STORY_TAG_NAME = 'tw-storydata';
+            const PASSAGE_TAG_NAME = 'tw-passagedata';
+            const FORMAT_TWINE = 'twine';
+            const FORMAT_HARLOWE_3 = 'harlowe-3';
+            const VALID_FORMATS = [FORMAT_TWINE, FORMAT_HARLOWE_3];
 
-    // Fonction d'extraction des balises
-    function extractTags(rawTags) {
-        const tags = rawTags.split(" ");
-        let animation = null, sound = null, background = null;
-
-        tags.forEach(tag => {
-            if (tag.startsWith("animation-")) animation = tag.replace("animation-", "");
-            if (tag.startsWith("sound-")) sound = tag.replace("sound-", "");
-            if (tag.startsWith("background-")) background = tag.replace("background-", "");
-        });
-
-        return { animation, sound, background };
-    }
-
-    // Fonction pour analyser un fichier .twee et le convertir en JSON
-    function parseTweeToJson(tweeContent) {
-        const story = {};
-        const passages = tweeContent.split("\n::").map(p => p.trim()).filter(p => p);
-
-        passages.forEach(rawPassage => {
-            const lines = rawPassage.split("\n");
-            const header = lines[0].trim();
-            const content = lines.slice(1).join("\n").trim();
-
-            // Extraire le titre, les balises
-            const titleMatch = header.match(/^(.*?)(?:\s*\[(.*?)\])?(?:\s*\{.*?\})?$/);
-            if (!titleMatch) return;
-
-            const title = titleMatch[1].trim();
-            if(title == ":: StoryTitle" || title == ":: StoryData"){
-                return;
+            /**
+             * Convert Twine story to JSON.
+             */
+            function twineToJSON(format) {
+                const storyElement = document.getElementsByTagName(STORY_TAG_NAME)[0];
+                const storyMeta = getElementAttributes(storyElement);
+                const result = {
+                    uuid: storyMeta.ifid,
+                    name: storyMeta.name,
+                    creator: storyMeta.creator,
+                    creatorVersion: storyMeta['creator-version'],
+                    schemaName: storyMeta.format,
+                    schemaVersion: storyMeta['format-version'],
+                    createdAtMs: Date.now(),
+                };
+                validate(format);
+                const passageElements = Array.from(storyElement.getElementsByTagName(PASSAGE_TAG_NAME));
+                result.passages = passageElements.map((passageElement) => {
+                    return processPassageElement(passageElement, format);
+                });
+                return result;
             }
-            const rawTags = titleMatch[2] || "";
 
-            const { animation, sound, background } = extractTags(rawTags);
-
-            // Extraire les liens
-            const links = [];
-            const updatedContent = content.replace(/\[\[(.*?)\|(.*?)\]\]/g, (match, text, target) => {
-                links.push({ text, target });
-                return ""; // Retirer le lien du contenu
-            });
-
-            // Ajouter le passage à l'histoire
-            story[title] = {
-                sentence: updatedContent.trim(),
-                links,
-                animation,
-                sound,
-                background
-            };
-        });
-
-        return { characterName: "Unknown", story };
-    }
-
-    // Intégration de la logique dans Twine
-    window.storyFormat = {
-        "id": "custom-twee-json-format",
-        "name": "Twee to JSON Format",
-        "author": "Ton Nom",
-        "version": "1.0",
-        "description": "Un format qui permet de lire un fichier Twee et de le convertir en JSON",
-        
-        // Lors de l'initialisation du format, tu peux insérer un bouton pour télécharger ou afficher le JSON
-        "start": function() {
-            const fileInput = document.createElement('input');
-            fileInput.type = 'file';
-            fileInput.accept = '.twee';
-            fileInput.addEventListener('change', function(event) {
-                const file = event.target.files[0];
-                if (file) {
-                    const reader = new FileReader();
-                    reader.onload = function(e) {
-                        const tweeContent = e.target.result;
-                        const jsonOutput = parseTweeToJson(tweeContent);
-
-                        // Afficher le JSON dans la console ou l'intégrer dans l'histoire
-                        console.log(JSON.stringify(jsonOutput, null, 2));
-
-                        // Tu peux aussi ajouter des fonctionnalités pour télécharger le fichier JSON, si nécessaire
-                        const downloadButton = document.createElement('button');
-                        downloadButton.textContent = "Download JSON";
-                        downloadButton.onclick = () => {
-                            const blob = new Blob([JSON.stringify(jsonOutput, null, 2)], { type: "application/json" });
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement("a");
-                            a.href = url;
-                            a.download = "story.json";
-                            a.click();
-                            URL.revokeObjectURL(url);
-                        };
-
-                        document.body.appendChild(downloadButton);
-                    };
-                    reader.readAsText(file);
+            /**
+             * Validate story and inputs. Currently this only validates the format arg. TODO: make this more robust.
+             */
+            function validate(format) {
+                const isValidFormat = VALID_FORMATS.some(validFormat => validFormat === format);
+                if (!isValidFormat) {
+                    throw new Error('Format is not valid.');
                 }
-            });
+            }
 
-            document.body.appendChild(fileInput);
-        }
-    };
+            /**
+             * Convert the HTML element for a story passage to JSON.
+             */
+            function processPassageElement(passageElement, format) {
+                const passageMeta = getElementAttributes(passageElement);
+                const result = {
+                    name: passageMeta.name,
+                    tags: passageMeta.tags,
+                    id: passageMeta.pid,
+                };
+                result.text = passageElement.innerText.trim();
+                Object.assign(result, processPassageText(result.text, format));
+                result.cleanText = sanitizeText(result.text, result.links, result.hooks, format);
+                return result;
+            }
 
-})();
+            function processPassageText(passageText, format) {
+                const result = { links: [] };
+                if (format === FORMAT_HARLOWE_3) {
+                    result.hooks = [];
+                }
+                let currentIndex = 0;
+                while (currentIndex < passageText.length) {
+                    const maybeLink = extractLinksAtIndex(passageText, currentIndex);
+                    if (maybeLink) {
+                        result.links.push(maybeLink);
+                        currentIndex += maybeLink.original.length;
+                    }
+                    if (format !== FORMAT_HARLOWE_3) {
+                        currentIndex += 1;
+                        continue;
+                    }
+                    const maybeLeftHook = extractLeftHooksAtIndex(passageText, currentIndex);
+                    if (maybeLeftHook) {
+                        result.hooks.push(maybeLeftHook);
+                        currentIndex += maybeLeftHook.original.length;
+                    }
+                    currentIndex += 1;
+                    const maybeHook = extractHooksAtIndex(passageText, currentIndex);
+                    if (maybeHook) {
+                        result.hooks.push(maybeHook);
+                        currentIndex += maybeHook.original.length;
+                    }
+                }
+                return result;
+            }
+
+            function extractLinksAtIndex(passageText, currentIndex) {
+                const currentChar = passageText[currentIndex];
+                const nextChar = passageText[currentIndex + 1];
+                if (currentChar === '[' && nextChar === '[') {
+                    const link = getSubstringBetweenBrackets(passageText, currentIndex + 1);
+                    const leftSplit = link.split('<-', 2);
+                    const rightSplit = link.split('->', 2);
+                    const original = passageText.substring(currentIndex, currentIndex + link.length + 4);
+                    if (leftSplit.length === 2) {
+                        return { linkText: leftSplit[1].trim(), passageName: leftSplit[0].trim(), original: original };
+                    }
+                    else if (rightSplit.length === 2) {
+                        return { linkText: rightSplit[0].trim(), passageName: rightSplit[1].trim(), original: original };
+                    }
+                    else {
+                        return { linkText: link.trim(), passageName: link.trim(), original: original };
+                    }
+                }
+            }
+
+            function extractLeftHooksAtIndex(passageText, currentIndex) {
+                const regexAlphaNum = /[a-z0-9]+/i;
+                const currentChar = passageText[currentIndex];
+                if (currentChar === '|') {
+                    const maybeHookName = getSubstringBetweenBrackets(passageText, currentIndex, '|', '>');
+                    if (maybeHookName.match(regexAlphaNum)) {
+                        const hookStartIndex = currentIndex + maybeHookName.length + 2; // advance to next char after ">"
+                        const hookStartChar = passageText[hookStartIndex];
+                        if (hookStartChar === '[') {
+                            const hookText = getSubstringBetweenBrackets(passageText, hookStartIndex);
+                            const hookEndIndex = hookStartIndex + hookText.length + 2;
+                            const original = passageText.substring(currentIndex, hookEndIndex);
+                            return { hookName: maybeHookName, hookText: hookText, original: original };
+                        }
+                    }
+                }
+            }
+
+            function extractHooksAtIndex(passageText, currentIndex) {
+                const regexAlphaNum = /[a-z0-9]+/i;
+                const currentChar = passageText[currentIndex];
+                const nextChar = passageText[currentIndex + 1];
+                const prevChar = currentIndex && passageText[currentIndex - 1];
+                if (currentChar === '[' && nextChar !== '[' && prevChar !== '[') {
+                    const hookText = getSubstringBetweenBrackets(passageText, currentIndex);
+                    const hookEndIndex = currentIndex + hookText.length + 2;
+                    const hookEndChar = passageText[hookEndIndex];
+                    if (hookEndChar === '<') {
+                        const maybeHookName = getSubstringBetweenBrackets(passageText, hookEndIndex, '<', '|');
+                        if (maybeHookName.match(regexAlphaNum)) {
+                            const original = passageText.substring(currentIndex, hookEndIndex + maybeHookName.length + 2);
+                            return { hookName: maybeHookName, hookText: hookText, original: original };
+                        }
+                    }
+                    const original = passageText.substring(currentIndex, hookText.length + 2);
+                    return { hookName: undefined, hookText: hookText, original: original };
+                }
+            }
+
+            function sanitizeText(passageText, links, hooks, format) {
+                links.forEach((link) => {
+                    passageText = passageText.replace(link.original, '');
+                });
+                if (format === FORMAT_HARLOWE_3) {
+                    hooks.forEach((hook) => {
+                        passageText = passageText.replace(hook.original, '');
+                    });
+                }
+                return passageText.trim();
+            }
+
+            /**
+             * Convert an HTML element to an object of attribute values.
+             */
+            function getElementAttributes(element) {
+                const result = {};
+                const attributes = Array.from(element.attributes);
+                attributes.forEach((attribute) => {
+                    result[attribute.name] = attribute.value;
+                });
+                return result;
+            }
+
+            function stringStartsWith(string, startswith) {
+                return string.trim().substring(0, startswith.length) === startswith;
+            }
+
+            function getSubstringBetweenBrackets(string, startIndex, openBracket, closeBracket) {
+                openBracket = openBracket || '[';
+                closeBracket = closeBracket || ']';
+                const bracketStack = [];
+                let currentChar = string[startIndex];
+                let currentIndex = startIndex;
+                let result = '';
+                if (currentChar !== openBracket) {
+                    return result;
+                }
+                while (currentIndex < string.length) {
+                    currentChar = string[currentIndex];
+                    if (currentChar === openBracket) {
+                        bracketStack.push(currentChar);
+                    }
+                    else if (currentChar === closeBracket) {
+                        bracketStack.pop();
+                        if (bracketStack.length === 0) {
+                            break;
+                        }
+                    }
+                    result += currentChar;
+                    currentIndex++;
+                }
+                return result;
+            }
+
+            window.onload = function() {
+                document.getElementById('content').innerHTML = JSON.stringify(twineToJSON("harlowe-3"), null, 2);
+            };
+        </script>
+    </head>
+    <body>
+        <h2>Twine to JSON Output</h2>
+        <pre id="content"></pre>
+    </body>
+</html>`
+});
