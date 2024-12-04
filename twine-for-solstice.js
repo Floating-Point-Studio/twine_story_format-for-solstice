@@ -1,5 +1,5 @@
 window.storyFormat({
-    "name": "Json for Solstice",
+    "name": "yy Json for Solstice",
     "version": "test",
     "author": "ChatGPT",
     "description": "Convert Harlowe 3-formatted Twine story to JSON",
